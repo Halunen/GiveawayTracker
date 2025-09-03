@@ -13,7 +13,9 @@ const {
   TWITCH_OAUTH,
   SHEET_WEBHOOK,
   NIGHTBOT_ACCESS_TOKEN = '',
-  ADMIN_TOKEN = ''
+  ADMIN_TOKEN = '',
+  SHEET_KEY = '',          // optional: shared secret for Apps Script ?key=
+  MOD_NAME = ''            // optional: default mod name if UI doesn't send one
 } = process.env;
 
 // Guard required env
@@ -54,6 +56,12 @@ let state = {
   history: []           // { winner, gid, at }
 };
 
+// Rolling buffer of recent messages per user (for winner_msgs)
+const recentMsgs = new Map(); // username -> [{ text, at }]
+const MSG_KEEP_MS = 5 * 60 * 1000; // keep last 5 minutes
+const MAX_PER_USER = 50;           // cap per user
+const MAX_ENTRANTS = 7500;         // hard cap on unique entrants (first 7,500)
+
 // Twitch IRC client
 const client = new tmi.Client({
   identity: { username: TWITCH_BOT, password: TWITCH_OAUTH },
@@ -69,15 +77,31 @@ client.connect().catch((e) => {
   process.exit(1);
 });
 
-// Collect entrants while open
+// Collect entrants while open & buffer recent messages
 client.on('message', (channel, tags, message, self) => {
   if (self) return;
   const display = (tags['display-name'] || tags.username || '').trim();
-  const text = (message || '').trim().toLowerCase();
+  const text = (message || '').trim();
+  const lower = text.toLowerCase();
 
-  if (state.open && text === (state.keyword || '').toLowerCase()) {
-    state.entrants.add(display);
+  // --- entrants: unique + cap at 7500 ---
+  if (state.open && lower === (state.keyword || '').toLowerCase()) {
+    if (state.entrants.size < MAX_ENTRANTS || state.entrants.has(display)) {
+      state.entrants.add(display); // Set ensures one entry per person
+    }
   }
+
+  // --- record recent messages (for winner_msgs) ---
+  const now = Date.now();
+  const arr = recentMsgs.get(display) || [];
+  arr.push({ text, at: now });
+
+  // trim per-user buffer
+  while (arr.length > MAX_PER_USER) arr.shift();
+  // drop too-old messages
+  while (arr.length && (now - arr[0].at) > MSG_KEEP_MS) arr.shift();
+
+  recentMsgs.set(display, arr);
 });
 
 // Helpers
@@ -99,14 +123,36 @@ async function sayInChat(msg) {
   }
 }
 
+// Webhook with ?key= and simple retries
 async function logToSheet(payload) {
   try {
-    await fetch(SHEET_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-  } catch (e) { console.error('Webhook failed:', e.message); }
+    const url = new URL(SHEET_WEBHOOK);
+    if (SHEET_KEY) url.searchParams.set('key', SHEET_KEY);
+
+    const attempts = [500, 1000, 2000]; // backoff in ms
+    const body = JSON.stringify(payload);
+
+    for (let i = 0; i < attempts.length; i++) {
+      try {
+        const r = await fetch(url.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body
+        });
+        const text = await r.text();
+        let json = {};
+        try { json = JSON.parse(text); } catch (_) {}
+        if (r.ok && json.ok !== false) return json;
+        console.error('Webhook non-OK', r.status, text);
+      } catch (e) {
+        console.error('Webhook error', e.message);
+      }
+      await new Promise(res => setTimeout(res, attempts[i]));
+    }
+  } catch (e) {
+    console.error('Webhook fatal', e.message);
+  }
+  throw new Error('Failed to log to sheet after retries');
 }
 
 function newGid() { return Date.now().toString(); }
@@ -120,7 +166,9 @@ app.get('/status', (req, res) => {
     entrantCount: state.entrants.size,
     entrants: [...state.entrants],
     pendingWinner: state.pendingWinner,
-    history: state.history
+    history: state.history,
+    maxEntrants: MAX_ENTRANTS,
+    maxReached: state.entrants.size >= MAX_ENTRANTS
   });
 });
 
@@ -166,20 +214,30 @@ app.post('/reroll', requireAdmin, async (req, res) => {
 });
 
 app.post('/confirm', requireAdmin, async (req, res) => {
-  const { winner, amount = '', note = '' } = req.body || {};
+  const { winner, amount = '', note = '', mod: modFromBody } = req.body || {};
   const picked = winner || state.pendingWinner?.user;
   if (!picked) return res.status(400).json({ error: 'No winner to confirm.' });
 
+  // Collect winner's recent messages (last 5 min), up to 10 lines
+  const now = Date.now();
+  const msgs = (recentMsgs.get(picked) || [])
+    .filter(m => now - m.at <= MSG_KEEP_MS)
+    .map(m => m.text)
+    .slice(-10);
+  const winner_msgs = msgs.join(' | ');
+
+  // Determine mod name
+  const mod = (modFromBody && String(modFromBody)) || MOD_NAME || '';
+
   await sayInChat(`Confirmed @${picked}! 🎉`);
 
+  // Minimal payload; Apps Script computes ET timestamp & viewer card link
   await logToSheet({
     channel: TWITCH_CHANNEL.replace('#',''),
     winner: picked,
-    amount, note,
-    giveaway_id: state.pendingWinner?.gid || newGid(),
-    source: 'dashboard',
-    winner_msgs: '',
-    chat_raw: ''
+    amount,
+    winner_msgs,  // NEW
+    mod           // NEW
   });
 
   state.history.unshift({ winner: picked, gid: state.pendingWinner?.gid || newGid(), at: Date.now() });
