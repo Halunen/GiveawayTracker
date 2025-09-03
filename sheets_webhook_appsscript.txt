@@ -1,0 +1,8 @@
+
+const SHEET = 'Winners';
+function doPost(e){
+  const data = JSON.parse(e.postData?.contents || '{}');
+  const sh = SpreadsheetApp.getActive().getSheetByName(SHEET) || SpreadsheetApp.getActive().insertSheet(SHEET);
+  sh.appendRow([new Date(), data.channel, data.winner]);
+  return ContentService.createTextOutput('OK');
+}

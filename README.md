@@ -1,0 +1,1 @@
+Giveaway Dashboard README - see conversation for full instructions.
