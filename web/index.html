@@ -106,7 +106,7 @@
           <div class="chip">Keyword: <b id="kKw">yo</b></div>
           <div class="chip">Entrants: <b id="kCnt">0</b></div>
           <div class="chip">Pending Winner: <b id="kPending">—</b></div>
-          <div class="chip">Total Given Today: $<b id="kTotal">0</b></div>
+          <div class="chip">Total Given (session): $<b id="kTotal">0</b></div>
         </div>
         <div id="lastUpdated" class="last-updated">Last updated: —</div>
       </div>
@@ -156,6 +156,42 @@ const API = location.origin.replace(/\/$/,'');
 let _allEntrants = [];
 let _lastStatus = null;
 
+/* ---------------- Session Total (client-only) ---------------- */
+const SESSION_KEY = 'gw.sessionTotal.v1';
+function loadSession(){
+  try{
+    const s = JSON.parse(sessionStorage.getItem(SESSION_KEY));
+    if (!s || typeof s.total !== 'number' || !Array.isArray(s.ids)) return { total: 0, ids: [] };
+    return s;
+  }catch{ return { total: 0, ids: [] }; }
+}
+function saveSession(s){ sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
+let _session = loadSession();
+
+function fmtCurrency(n){
+  return new Intl.NumberFormat(undefined, { style:'currency', currency:'USD' }).format(n||0);
+}
+function updateTotalUI(){
+  document.getElementById('kTotal').textContent = _session.total.toFixed(2).replace(/\.00$/,'');
+  document.getElementById('lastUpdated').textContent = 'Last updated: ' +
+    new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+function bumpSessionTotal(amount, dedupeId){
+  const amt = Number(amount);
+  if (!Number.isFinite(amt)) return { ok:false, error:'Invalid amount' };
+  if (dedupeId && _session.ids.includes(String(dedupeId))){
+    // already counted this session
+    updateTotalUI();
+    return { ok:true, deduped:true, total:_session.total };
+  }
+  _session.total = (_session.total || 0) + amt;
+  if (dedupeId) _session.ids.push(String(dedupeId));
+  saveSession(_session);
+  updateTotalUI();
+  return { ok:true, total:_session.total };
+}
+/* ------------------------------------------------------------ */
+
 function authHeaders() {
   const t = document.getElementById('token').value.trim();
   return t ? { 'x-admin-token': t, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
@@ -178,10 +214,7 @@ async function closeGiveaway(){
 async function roll() {
   try {
     const r = await fetch(API + '/roll', { method: 'POST', headers: authHeaders() });
-    if (!r.ok) {
-      toast('Cannot roll yet', true);
-      return;
-    }
+    if (!r.ok) { toast('Cannot roll yet', true); return; }
     const data = await r.json();
     toast('Rolled');
     if (data.pendingWinner) {
@@ -200,17 +233,26 @@ async function confirmWinner(){
   const manual = prompt('Confirm which winner? (leave blank to confirm the pending one)');
   const r = await fetch(API + '/confirm', { method:'POST', headers:authHeaders(),
     body: JSON.stringify({ winner: manual || undefined, amount: amt, note }) });
-  if (!r.ok) toast('No winner to confirm', true); else toast('Winner confirmed 🎉');
+  if (!r.ok){
+    toast('No winner to confirm', true);
+    return refresh();
+  }
+  toast('Winner confirmed 🎉');
+
+  // --- Session total bump (client-only) ---
+  // Prefer pendingWinner.gid to dedupe; fall back to pending user or manual string.
+  const pending = _lastStatus?.pendingWinner;
+  const dedupeId = manual || (pending?.gid ?? pending?.user ?? '');
+  const bump = bumpSessionTotal(amt, dedupeId);
+  if (bump.deduped) toast('Already counted this session', true);
+
   refresh();
 }
 
 async function reroll() {
   try {
     const r = await fetch(API + '/reroll', { method: 'POST', headers: authHeaders() });
-    if (!r.ok) {
-      toast('No entrants', true);
-      return;
-    }
+    if (!r.ok) { toast('No entrants', true); return; }
     const data = await r.json();
     toast('Rerolled');
     if (data.pendingWinner) {
@@ -301,16 +343,8 @@ async function refresh(){
     document.getElementById('status').innerHTML = `Open: <b>${s.open}</b> • Keyword: <b>${s.keyword}</b>`;
     _allEntrants = s.entrants || [];
 
-    try {
-      const t = await fetch(API + '/daily-total');
-      const tj = await t.json();
-      document.getElementById('kTotal').textContent = tj.total || 0;
-      document.getElementById('lastUpdated').textContent = 'Last updated: ' +
-        new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-    } catch(err) {
-      document.getElementById('kTotal').textContent = '—';
-      document.getElementById('lastUpdated').textContent = 'Last updated: error';
-    }
+    // 🔁 Session-only total: update UI from local session (no server call)
+    updateTotalUI();
 
     renderEntrants(); renderPending(s.pendingWinner); renderRecent(s.history);
   } catch(e){

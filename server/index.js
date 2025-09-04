@@ -1,4 +1,4 @@
-// Giveaway Dashboard - full server
+// Giveaway Dashboard - full server (session-only total)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -12,21 +12,19 @@ const {
   TWITCH_BOT,
   TWITCH_OAUTH,
   SHEET_WEBHOOK,         // POST URL (Apps Script doPost)
-  SHEET_TOTAL,           // GET URL (Apps Script doGet)
   NIGHTBOT_ACCESS_TOKEN = '',
   ADMIN_TOKEN = '',
   SHEET_KEY = '',        // optional: shared secret for Apps Script ?key=
   MOD_NAME = ''          // optional: default mod name if UI doesn't send one
 } = process.env;
 
-// Guard required env
-if (!TWITCH_CHANNEL || !TWITCH_BOT || !TWITCH_OAUTH || !SHEET_WEBHOOK || !SHEET_TOTAL) {
+// Guard required env (SHEET_TOTAL no longer required for session totals)
+if (!TWITCH_CHANNEL || !TWITCH_BOT || !TWITCH_OAUTH || !SHEET_WEBHOOK) {
   console.error('❌ Missing env vars:', {
     TWITCH_CHANNEL: !!TWITCH_CHANNEL,
     TWITCH_BOT: !!TWITCH_BOT,
     TWITCH_OAUTH: !!TWITCH_OAUTH,
-    SHEET_WEBHOOK: !!SHEET_WEBHOOK,
-    SHEET_TOTAL: !!SHEET_TOTAL
+    SHEET_WEBHOOK: !!SHEET_WEBHOOK
   });
   process.exit(1);
 }
@@ -57,6 +55,22 @@ let state = {
   pendingWinner: null,  // { user, gid }
   history: []           // { winner, gid, at }
 };
+
+// ---- Session-only total (server process memory) ----
+let sessionTotal = 0;
+const sessionDedup = new Set(); // gid or "manual:winner"
+
+function bumpSessionTotal(amount, dedupeId) {
+  const amt = Number(amount);
+  if (!Number.isFinite(amt)) return { ok: false, error: 'invalid amount' };
+  if (dedupeId && sessionDedup.has(String(dedupeId))) {
+    return { ok: true, deduped: true, total: sessionTotal };
+  }
+  sessionTotal += amt;
+  if (dedupeId) sessionDedup.add(String(dedupeId));
+  return { ok: true, total: sessionTotal };
+}
+// ---------------------------------------------------
 
 // Rolling buffer of recent messages per user (for winner_msgs)
 const recentMsgs = new Map(); // username -> [{ text, at }]
@@ -170,23 +184,16 @@ app.get('/status', (req, res) => {
     pendingWinner: state.pendingWinner,
     history: state.history,
     maxEntrants: MAX_ENTRANTS,
-    maxReached: state.entrants.size >= MAX_ENTRANTS
+    maxReached: state.entrants.size >= MAX_ENTRANTS,
+    // optional: expose session total in status
+    sessionTotal
   });
 });
 
-// ✅ Daily total passthrough from Google Sheets
-app.get('/daily-total', async (req, res) => {
-  try {
-    const url = new URL(SHEET_TOTAL); // GET endpoint
-    if (SHEET_KEY) url.searchParams.set('key', SHEET_KEY);
-
-    const r = await fetch(url.toString());
-    const json = await r.json();
-    res.json(json);
-  } catch (e) {
-    console.error('Daily total fetch failed:', e.message);
-    res.status(500).json({ ok: false, error: 'failed to fetch daily total' });
-  }
+// (Deprecated) /daily-total removed — using server-session total instead.
+// If you need a read-only endpoint:
+app.get('/session-total', (req, res) => {
+  res.json({ ok: true, total: sessionTotal });
 });
 
 app.post('/start', requireAdmin, async (req, res) => {
@@ -284,11 +291,22 @@ app.post('/confirm', requireAdmin, async (req, res) => {
     mod
   });
 
+  // ---- Session total bump (server process) ----
+  // Prefer pending gid; for manual confirms, dedupe by the winner string.
+  const dedupeId = state.pendingWinner?.gid ? state.pendingWinner.gid : `manual:${picked}`;
+  const bump = bumpSessionTotal(amount, dedupeId);
+  if (bump.deduped) {
+    console.log('ℹ️ Session total dedupe hit for', dedupeId);
+  } else if (!bump.ok) {
+    console.warn('⚠️ Session total not bumped:', bump.error);
+  }
+  // ---------------------------------------------
+
   state.history.unshift({ winner: picked, gid: state.pendingWinner?.gid || newGid(), at: Date.now() });
   if (state.history.length > 50) state.history.pop();
   state.pendingWinner = null;
 
-  res.json({ ok: true });
+  res.json({ ok: true, sessionTotal });
 });
 
 // 404
@@ -301,8 +319,7 @@ app.listen(Number(PORT), () => {
     channel: TWITCH_CHANNEL,
     bot: TWITCH_BOT,
     hasOAuth: !!TWITCH_OAUTH,
-    hasWebhook: !!SHEET_WEBHOOK,
-    hasTotal: !!SHEET_TOTAL
+    hasWebhook: !!SHEET_WEBHOOK
   });
 });
 
