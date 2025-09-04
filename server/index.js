@@ -196,7 +196,8 @@ app.post('/start', requireAdmin, async (req, res) => {
   state.entrants = new Set();
   state.pendingWinner = null;
 
-  await sayInChat(`Giveaway started — type ${state.keyword} to enter! Giveaway is open until closed.`);
+  console.log(`✅ Giveaway started with keyword "${state.keyword}"`);
+  setTimeout(() => sayInChat(`Giveaway started — type ${state.keyword} to enter! Giveaway is open until closed.`), 0);
   res.json({ ok: true });
 });
 
@@ -204,48 +205,54 @@ app.post('/start', requireAdmin, async (req, res) => {
 app.post('/close', requireAdmin, async (req, res) => {
   if (!state.open) return res.status(400).json({ error: 'Giveaway is not open.' });
   state.open = false;
-  await sayInChat(`Giveaway is now closed.`);
+  console.log('✅ Giveaway closed');
+  setTimeout(() => sayInChat(`Giveaway is now closed.`), 0);
   res.json({ ok: true });
 });
 
-// ✅ Roll — always 200
+// ✅ Roll — instant response + console log
 app.post('/roll', requireAdmin, async (req, res) => {
   const arr = [...state.entrants];
 
   if (!arr.length) {
     state.pendingWinner = null;
+    console.log('⚠️ Tried to roll, but no entrants');
     return res.json({ ok: true, pendingWinner: null });
   }
 
   const pick = arr[Math.floor(Math.random() * arr.length)];
   state.pendingWinner = { user: pick, gid: newGid() };
 
+  console.log('🎲 Rolled winner:', pick);
   res.json({ ok: true, pendingWinner: state.pendingWinner });
 
-  sayInChat(`Winner is @${pick}! Respond in chat!`)
-    .catch(e => console.error('sayInChat failed:', e));
+  // fire-and-forget chat message
+  setTimeout(() => sayInChat(`Winner is @${pick}! Respond in chat!`), 0);
 });
 
-// ✅ Reroll — always 200
+// ✅ Reroll — instant response + console log
 app.post('/reroll', requireAdmin, async (req, res) => {
   const arr = [...state.entrants];
 
   if (!arr.length) {
     state.pendingWinner = null;
+    console.log('⚠️ Tried to reroll, but no entrants');
     return res.json({ ok: true, pendingWinner: null });
   }
 
   const pick = arr[Math.floor(Math.random() * arr.length)];
   state.pendingWinner = { user: pick, gid: newGid() };
 
+  console.log('🎲 Rerolled winner:', pick);
   res.json({ ok: true, pendingWinner: state.pendingWinner });
 
-  sayInChat(`New winner is @${pick}!`)
-    .catch(e => console.error('sayInChat failed:', e));
+  // fire-and-forget chat message
+  setTimeout(() => sayInChat(`New winner is @${pick}!`), 0);
 });
 
 app.post('/cancel', requireAdmin, (req, res) => {
   state.pendingWinner = null;
+  console.log('⚠️ Pending winner cancelled');
   res.json({ ok: true });
 });
 
@@ -265,7 +272,8 @@ app.post('/confirm', requireAdmin, async (req, res) => {
   // Determine mod name
   const mod = (modFromBody && String(modFromBody)) || MOD_NAME || '';
 
-  await sayInChat(`Confirmed @${picked}! 🎉`);
+  console.log('✅ Confirmed winner:', picked);
+  setTimeout(() => sayInChat(`Confirmed @${picked}! 🎉`), 0);
 
   // Minimal payload; Apps Script computes ET timestamp & viewer card link
   await logToSheet({
