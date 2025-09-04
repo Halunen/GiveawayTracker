@@ -40,6 +40,7 @@
     }
     @media(prefers-color-scheme:light){ input{ background:#fff } }
 
+    /* DEFAULT BUTTONS = GRAY */
     .btn{
       height:36px; padding:0 14px; border-radius:10px;
       border:1px solid var(--border);
@@ -50,6 +51,7 @@
     .btn:hover{ background:#d0d7e1 }
     .btn:active{ transform: translateY(1px) }
 
+    /* VARIANTS */
     .btn.primary{ background:linear-gradient(180deg,var(--brand),var(--brand-2)); border-color:transparent; color:#fff }
     .btn.ok{ background:linear-gradient(180deg,#22c55e,#16a34a); border-color:transparent; color:#04130a }
     .btn.warn{ background:linear-gradient(180deg,#f59e0b,#d97706); border-color:transparent; color:#1f1300 }
@@ -176,23 +178,18 @@ async function closeGiveaway(){
 async function roll() {
   try {
     const r = await fetch(API + '/roll', { method: 'POST', headers: authHeaders() });
-    const data = await r.json();
-    console.log('Roll response:', data);
     if (!r.ok) {
-      toast('Roll failed: ' + (data.error || r.status), true);
+      toast('Cannot roll yet', true);
       return;
     }
+    const data = await r.json();
+    toast('Rolled');
     if (data.pendingWinner) {
-      toast('Rolled: @' + data.pendingWinner.user);
       _lastStatus.pendingWinner = data.pendingWinner;
       renderPending(data.pendingWinner);
-    } else {
-      toast('No entrants yet');
-      renderPending(null);
     }
     refresh();
   } catch (err) {
-    console.error('Roll error:', err);
     toast('Roll failed', true);
   }
 }
@@ -203,33 +200,25 @@ async function confirmWinner(){
   const manual = prompt('Confirm which winner? (leave blank to confirm the pending one)');
   const r = await fetch(API + '/confirm', { method:'POST', headers:authHeaders(),
     body: JSON.stringify({ winner: manual || undefined, amount: amt, note }) });
-  const data = await r.json().catch(()=>({}));
-  console.log('Confirm response:', data);
-  if (!r.ok) toast('No winner to confirm', true); 
-  else toast('Winner confirmed 🎉');
+  if (!r.ok) toast('No winner to confirm', true); else toast('Winner confirmed 🎉');
   refresh();
 }
 
 async function reroll() {
   try {
     const r = await fetch(API + '/reroll', { method: 'POST', headers: authHeaders() });
-    const data = await r.json();
-    console.log('Reroll response:', data);
     if (!r.ok) {
-      toast('Reroll failed: ' + (data.error || r.status), true);
+      toast('No entrants', true);
       return;
     }
+    const data = await r.json();
+    toast('Rerolled');
     if (data.pendingWinner) {
-      toast('Rerolled: @' + data.pendingWinner.user);
       _lastStatus.pendingWinner = data.pendingWinner;
       renderPending(data.pendingWinner);
-    } else {
-      toast('No entrants yet');
-      renderPending(null);
     }
     refresh();
   } catch (err) {
-    console.error('Reroll error:', err);
     toast('Reroll failed', true);
   }
 }
@@ -241,14 +230,19 @@ function toast(msg, isErr=false){ const el = document.getElementById('toast'); e
 function renderEntrants(){
   const q = (document.getElementById('search').value || '').trim().toLowerCase();
   const filtered = q ? _allEntrants.filter(u => u.toLowerCase().includes(q)) : _allEntrants;
+
   const html = filtered.length ? filtered.map(u => `
     <div class="row" style="justify-content:space-between; padding:4px 0; border-bottom:1px dashed var(--border);">
       <div>@${u}</div>
-      <div class="row"><button class="btn" onclick="openViewerCard('${u.replace(/'/g,"\\'")}')">User card</button></div>
+      <div class="row">
+        <button class="btn" onclick="openViewerCard('${encodeURIComponent(u)}')">User card</button>
+      </div>
     </div>`).join('') : '—';
+
   document.getElementById('entrants').innerHTML = html;
   document.getElementById('kCnt').textContent = filtered.length;
 }
+
 function renderRecent(list){
   const wrap = document.getElementById('recent'); wrap.innerHTML = '';
   (list || []).slice(0,10).forEach(w => {
@@ -258,18 +252,23 @@ function renderRecent(list){
     wrap.appendChild(d);
   });
 }
+
 function viewerCardUrl(channel, username) {
   const ch = (_lastStatus?.channel || '').replace(/^#/, '');
   return `https://www.twitch.tv/popout/${encodeURIComponent(ch)}/viewercard/${encodeURIComponent(username)}`;
 }
+
 function openViewerCard(username) {
-  window.open(viewerCardUrl(_lastStatus?.channel, username), '_blank', 'noopener,width=420,height=640');
+  const decoded = decodeURIComponent(username);
+  window.open(viewerCardUrl(_lastStatus?.channel, decoded), '_blank', 'noopener,width=420,height=640');
 }
+
 function openPendingUserCard() {
   const user = _lastStatus?.pendingWinner?.user;
   if (!user) return alert('No pending winner right now.');
   openViewerCard(user);
 }
+
 function renderPending(pending){
   const box = document.getElementById('pendingInner');
   if (!pending){ box.innerHTML = '<div class="bd" style="color:var(--muted)">No pending winner…</div>'; return; }
@@ -277,7 +276,7 @@ function renderPending(pending){
     <div class="bd">
       <div class="row" style="justify-content:space-between">
         <div>
-          <div style="font-weight:600; font-size:16px;">@${pending.user}</div>
+          <div style="font-weight:600; font-size:16px">@${pending.user}</div>
           <div style="color:var(--muted); font-size:12px">GID: ${pending.gid}</div>
         </div>
         <div class="row">
@@ -287,7 +286,7 @@ function renderPending(pending){
           <button class="btn ok" onclick="cancel()">Cancel</button>
         </div>
       </div>
-    </div>;
+    </div>`;
 }
 
 async function refresh(){
@@ -326,6 +325,14 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
   catch(e){ toast('Copy failed', true); }
 });
 setInterval(refresh, 1500); refresh();
+
+// ✅ Attach functions to window for onclick buttons
+window.start = start;
+window.closeGiveaway = closeGiveaway;
+window.roll = roll;
+window.confirmWinner = confirmWinner;
+window.reroll = reroll;
+window.cancel = cancel;
 </script>
 </body>
 </html>
