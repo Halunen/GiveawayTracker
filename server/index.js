@@ -11,20 +11,22 @@ const {
   TWITCH_CHANNEL,
   TWITCH_BOT,
   TWITCH_OAUTH,
-  SHEET_WEBHOOK,
+  SHEET_WEBHOOK,         // POST URL (Apps Script doPost)
+  SHEET_TOTAL,           // GET URL (Apps Script doGet)
   NIGHTBOT_ACCESS_TOKEN = '',
   ADMIN_TOKEN = '',
-  SHEET_KEY = '',          // optional: shared secret for Apps Script ?key=
-  MOD_NAME = ''            // optional: default mod name if UI doesn't send one
+  SHEET_KEY = '',        // optional: shared secret for Apps Script ?key=
+  MOD_NAME = ''          // optional: default mod name if UI doesn't send one
 } = process.env;
 
 // Guard required env
-if (!TWITCH_CHANNEL || !TWITCH_BOT || !TWITCH_OAUTH || !SHEET_WEBHOOK) {
+if (!TWITCH_CHANNEL || !TWITCH_BOT || !TWITCH_OAUTH || !SHEET_WEBHOOK || !SHEET_TOTAL) {
   console.error('❌ Missing env vars:', {
     TWITCH_CHANNEL: !!TWITCH_CHANNEL,
     TWITCH_BOT: !!TWITCH_BOT,
     TWITCH_OAUTH: !!TWITCH_OAUTH,
-    SHEET_WEBHOOK: !!SHEET_WEBHOOK
+    SHEET_WEBHOOK: !!SHEET_WEBHOOK,
+    SHEET_TOTAL: !!SHEET_TOTAL
   });
   process.exit(1);
 }
@@ -172,13 +174,13 @@ app.get('/status', (req, res) => {
   });
 });
 
-// NEW: Daily total passthrough from Google Sheets
+// ✅ Daily total passthrough from Google Sheets
 app.get('/daily-total', async (req, res) => {
   try {
-    const url = new URL(SHEET_WEBHOOK);
+    const url = new URL(SHEET_TOTAL); // GET endpoint
     if (SHEET_KEY) url.searchParams.set('key', SHEET_KEY);
 
-    const r = await fetch(url.toString()); // GET request
+    const r = await fetch(url.toString());
     const json = await r.json();
     res.json(json);
   } catch (e) {
@@ -198,7 +200,7 @@ app.post('/start', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// NEW: Manual close endpoint
+// Manual close endpoint
 app.post('/close', requireAdmin, async (req, res) => {
   if (!state.open) return res.status(400).json({ error: 'Giveaway is not open.' });
   state.open = false;
@@ -206,23 +208,22 @@ app.post('/close', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ✅ Roll — now returns pendingWinner
 app.post('/roll', requireAdmin, async (req, res) => {
-  if (state.open) return res.status(400).json({ error: 'Giveaway still open.' });
   const arr = [...state.entrants];
   if (!arr.length) return res.status(400).json({ error: 'No entrants.' });
 
   const pick = arr[Math.floor(Math.random() * arr.length)];
   state.pendingWinner = { user: pick, gid: newGid() };
 
-  await sayInChat(`Winner is @${pick}! Respond in chat!`);
-  res.json({ ok: true, winner: pick });
+  res.json({ ok: true, pendingWinner: state.pendingWinner });
+
+  // chat in background
+  sayInChat(`Winner is @${pick}! Respond in chat!`)
+    .catch(e => console.error('sayInChat failed:', e));
 });
 
-app.post('/cancel', requireAdmin, (req, res) => {
-  state.pendingWinner = null;
-  res.json({ ok: true });
-});
-
+// ✅ Reroll — now returns pendingWinner
 app.post('/reroll', requireAdmin, async (req, res) => {
   const arr = [...state.entrants];
   if (!arr.length) return res.status(400).json({ error: 'No entrants.' });
@@ -230,8 +231,16 @@ app.post('/reroll', requireAdmin, async (req, res) => {
   const pick = arr[Math.floor(Math.random() * arr.length)];
   state.pendingWinner = { user: pick, gid: newGid() };
 
-  await sayInChat(`New winner is @${pick}!`);
-  res.json({ ok: true, winner: pick });
+  res.json({ ok: true, pendingWinner: state.pendingWinner });
+
+  // chat in background
+  sayInChat(`New winner is @${pick}!`)
+    .catch(e => console.error('sayInChat failed:', e));
+});
+
+app.post('/cancel', requireAdmin, (req, res) => {
+  state.pendingWinner = null;
+  res.json({ ok: true });
 });
 
 app.post('/confirm', requireAdmin, async (req, res) => {
@@ -278,7 +287,8 @@ app.listen(Number(PORT), () => {
     channel: TWITCH_CHANNEL,
     bot: TWITCH_BOT,
     hasOAuth: !!TWITCH_OAUTH,
-    hasWebhook: !!SHEET_WEBHOOK
+    hasWebhook: !!SHEET_WEBHOOK,
+    hasTotal: !!SHEET_TOTAL
   });
 });
 
