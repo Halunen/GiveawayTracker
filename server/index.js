@@ -172,6 +172,21 @@ app.get('/status', (req, res) => {
   });
 });
 
+// NEW: Daily total passthrough from Google Sheets
+app.get('/daily-total', async (req, res) => {
+  try {
+    const url = new URL(SHEET_WEBHOOK);
+    if (SHEET_KEY) url.searchParams.set('key', SHEET_KEY);
+
+    const r = await fetch(url.toString()); // GET request
+    const json = await r.json();
+    res.json(json);
+  } catch (e) {
+    console.error('Daily total fetch failed:', e.message);
+    res.status(500).json({ ok: false, error: 'failed to fetch daily total' });
+  }
+});
+
 app.post('/start', requireAdmin, async (req, res) => {
   const { keyword = 'yo', durationMs = 60000 } = req.body || {};
   state.open = true;

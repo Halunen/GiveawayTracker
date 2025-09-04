@@ -40,12 +40,12 @@
     }
     @media(prefers-color-scheme:light){ input{ background:#fff } }
 
-    /* DEFAULT BUTTONS = GRAY (not black) */
+    /* DEFAULT BUTTONS = GRAY */
     .btn{
       height:36px; padding:0 14px; border-radius:10px;
       border:1px solid var(--border);
-      background:#e2e8f0;      /* light gray */
-      color:#111;               /* dark text for contrast */
+      background:#e2e8f0;
+      color:#111;
       cursor:pointer; transition:.15s;
     }
     .btn:hover{ background:#d0d7e1 }
@@ -53,13 +53,15 @@
 
     /* VARIANTS */
     .btn.primary{ background:linear-gradient(180deg,var(--brand),var(--brand-2)); border-color:transparent; color:#fff }
-    .btn.ok{ background:linear-gradient(180deg,#22c55e,#16a34a); border-color:transparent; color:#04130a } /* green */
-    .btn.warn{ background:linear-gradient(180deg,#f59e0b,#d97706); border-color:transparent; color:#1f1300 } /* yellow/orange */
-    .btn.danger{ background:linear-gradient(180deg,#ff6b6b,#ef4444); border-color:transparent; color:#2a0000 } /* red (unused for cancel per request) */
+    .btn.ok{ background:linear-gradient(180deg,#22c55e,#16a34a); border-color:transparent; color:#04130a }
+    .btn.warn{ background:linear-gradient(180deg,#f59e0b,#d97706); border-color:transparent; color:#1f1300 }
+    .btn.danger{ background:linear-gradient(180deg,#ff6b6b,#ef4444); border-color:transparent; color:#2a0000 }
 
     .kpi{ display:flex; gap:14px; flex-wrap:wrap }
     .kpi .chip{ background:#0f1320; border:1px solid var(--border); padding:8px 12px; border-radius:10px; font-size:13px }
     @media(prefers-color-scheme:light){ .kpi .chip{ background:#fff } }
+    .last-updated{ font-size:12px; color:var(--muted); margin-top:6px }
+
     .scroll{
       border:1px solid var(--border); border-radius:10px; background:#0f1320; height:52vh; overflow:auto; padding:10px
     }
@@ -91,21 +93,22 @@
           <label>Keyword <input id="kw" value="yo" style="width:120px; margin-left:6px"></label>
           <label>Open (sec) <input id="secs" value="60" style="width:120px; margin-left:6px"></label>
           <label>Admin Token 
-  <input type="password" id="token" placeholder="optional" style="width:220px; margin-left:6px">
-</label>
+            <input type="password" id="token" placeholder="optional" style="width:220px; margin-left:6px">
+          </label>
           <button class="btn primary" onclick="start()">Start</button>
-          <button class="btn warn" onclick="roll()">Roll</button>          <!-- yellow -->
-          <button class="btn ok" onclick="confirmWinner()">Confirm</button> <!-- green -->
-          <button class="btn warn" onclick="reroll()">Reroll</button>       <!-- yellow (kept as warn) -->
-          <button class="btn ok" onclick="cancel()">Cancel</button>         <!-- green per request -->
-          <button class="btn" onclick="openPendingUserCard()">User card</button>
+          <button class="btn warn" onclick="roll()">Roll</button>
+          <button class="btn ok" onclick="confirmWinner()">Confirm</button>
+          <button class="btn warn" onclick="reroll()">Reroll</button>
+          <button class="btn ok" onclick="cancel()">Cancel</button>
         </div>
         <div class="kpi">
           <div class="chip">Open: <b id="kOpen">false</b></div>
           <div class="chip">Keyword: <b id="kKw">yo</b></div>
           <div class="chip">Entrants: <b id="kCnt">0</b></div>
           <div class="chip">Pending Winner: <b id="kPending">—</b></div>
+          <div class="chip">Total Given Today: $<b id="kTotal">0</b></div>
         </div>
+        <div id="lastUpdated" class="last-updated">Last updated: —</div>
       </div>
     </div>
 
@@ -244,9 +247,24 @@ async function refresh(){
     document.getElementById('kPending').textContent = s.pendingWinner ? '@'+s.pendingWinner.user : '—';
     document.getElementById('status').innerHTML = `Open: <b>${s.open}</b> • Keyword: <b>${s.keyword}</b>`;
     _allEntrants = s.entrants || [];
+
+    // Fetch daily total
+    try {
+      const t = await fetch(API + '/daily-total');
+      const tj = await t.json();
+      document.getElementById('kTotal').textContent = tj.total || 0;
+      document.getElementById('lastUpdated').textContent = 'Last updated: ' +
+        new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    } catch(err) {
+      document.getElementById('kTotal').textContent = '—';
+      document.getElementById('lastUpdated').textContent = 'Last updated: error';
+    }
+
     renderEntrants(); renderPending(s.pendingWinner); renderRecent(s.history);
   } catch(e){
-    const lp = document.getElementById('livepill'); lp.textContent = 'disconnected'; lp.classList.remove('live');
+    const lp = document.getElementById('livepill'); 
+    lp.textContent = 'disconnected'; 
+    lp.classList.remove('live');
   }
 }
 document.getElementById('search').addEventListener('input', renderEntrants);
