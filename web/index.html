@@ -131,9 +131,23 @@
         <div class="bd">
           <div id="status">—</div>
           <div style="height:12px"></div>
+
+          <!-- Pending winner card -->
           <div id="pendingInner" class="card" style="border:1px dashed var(--border); background:transparent;">
             <div class="bd">No pending winner…</div>
           </div>
+
+          <!-- NEW: Pending user's recent chat -->
+          <div id="pendingChat" class="card" style="margin-top:10px; border:1px dashed var(--border); background:transparent;">
+            <div class="bd">
+              <div style="color:var(--muted); font-size:13px; margin-bottom:6px">
+                Recent chat from pending winner:
+                <span id="pendingChatHint" style="margin-left:6px; opacity:.8"></span>
+              </div>
+              <div id="pendingChatList" class="scroll" style="height:160px;"></div>
+            </div>
+          </div>
+
           <div style="height:12px"></div>
           <div>
             <div style="color:var(--muted); font-size:13px">Recent winners:</div>
@@ -180,7 +194,6 @@ function bumpSessionTotal(amount, dedupeId){
   const amt = Number(amount);
   if (!Number.isFinite(amt)) return { ok:false, error:'Invalid amount' };
   if (dedupeId && _session.ids.includes(String(dedupeId))){
-    // already counted this session
     updateTotalUI();
     return { ok:true, deduped:true, total:_session.total };
   }
@@ -220,6 +233,7 @@ async function roll() {
     if (data.pendingWinner) {
       _lastStatus.pendingWinner = data.pendingWinner;
       renderPending(data.pendingWinner);
+      refreshPendingChat(true); // immediate fetch for new pending
     }
     refresh();
   } catch (err) {
@@ -240,7 +254,6 @@ async function confirmWinner(){
   toast('Winner confirmed 🎉');
 
   // --- Session total bump (client-only) ---
-  // Prefer pendingWinner.gid to dedupe; fall back to pending user or manual string.
   const pending = _lastStatus?.pendingWinner;
   const dedupeId = manual || (pending?.gid ?? pending?.user ?? '');
   const bump = bumpSessionTotal(amt, dedupeId);
@@ -258,6 +271,7 @@ async function reroll() {
     if (data.pendingWinner) {
       _lastStatus.pendingWinner = data.pendingWinner;
       renderPending(data.pendingWinner);
+      refreshPendingChat(true); // immediate fetch
     }
     refresh();
   } catch (err) {
@@ -313,7 +327,13 @@ function openPendingUserCard() {
 
 function renderPending(pending){
   const box = document.getElementById('pendingInner');
-  if (!pending){ box.innerHTML = '<div class="bd" style="color:var(--muted)">No pending winner…</div>'; return; }
+  if (!pending){ 
+    box.innerHTML = '<div class="bd" style="color:var(--muted)">No pending winner…</div>'; 
+    // clear chat panel too
+    renderPendingChat([]);
+    document.getElementById('pendingChatHint').textContent = '';
+    return; 
+  }
   box.innerHTML = `
     <div class="bd">
       <div class="row" style="justify-content:space-between">
@@ -331,6 +351,54 @@ function renderPending(pending){
     </div>`;
 }
 
+/* ---------------- Pending chat view ---------------- */
+function escapeHtml(s){
+  return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+}
+
+function renderPendingChat(lines){
+  const list = document.getElementById('pendingChatList');
+  if (!list) return;
+  if (!lines || !lines.length){
+    list.innerHTML = '<div style="color:var(--muted)">No messages yet…</div>';
+    return;
+  }
+  list.innerHTML = lines.map(m => {
+    const t = new Date(m.at);
+    const hhmm = t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    return `<div style="padding:4px 0; border-bottom:1px dashed var(--border)">
+      <span style="opacity:.7; font-size:12px">${hhmm}</span>
+      <span style="opacity:.7"> • </span>
+      <span>${escapeHtml(m.text)}</span>
+    </div>`;
+  }).join('');
+}
+
+async function refreshPendingChat(force=false){
+  const user = _lastStatus?.pendingWinner?.user;
+  const since = _lastStatus?.pendingSince;
+  const hint = document.getElementById('pendingChatHint');
+  if (!user){
+    renderPendingChat([]);
+    if (hint) hint.textContent = '';
+    return;
+  }
+  // tiny optimization: only show “since” if available
+  if (hint) hint.textContent = since ? `since ${new Date(since).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}` : '';
+
+  try{
+    const url = new URL(API + '/user-messages', location.origin);
+    url.searchParams.set('user', user);
+    if (since) url.searchParams.set('since', String(since));
+    const r = await fetch(url.toString());
+    const data = await r.json();
+    if (data.ok) renderPendingChat(data.messages || []);
+  }catch(e){
+    // ignore errors, keep panel quiet
+  }
+}
+/* --------------------------------------------------- */
+
 async function refresh(){
   try{
     const r = await fetch(API + '/status');
@@ -347,18 +415,25 @@ async function refresh(){
     updateTotalUI();
 
     renderEntrants(); renderPending(s.pendingWinner); renderRecent(s.history);
+
+    // 🔎 Pending chat polling
+    refreshPendingChat();
   } catch(e){
     const lp = document.getElementById('livepill'); 
     lp.textContent = 'disconnected'; 
     lp.classList.remove('live');
   }
 }
+
 document.getElementById('search').addEventListener('input', renderEntrants);
 document.getElementById('copyBtn').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText((_allEntrants||[]).join('\n')); toast('Entrants copied'); }
   catch(e){ toast('Copy failed', true); }
 });
-setInterval(refresh, 1500); refresh();
+
+// Poll status (and pending chat) every 1.5s
+setInterval(refresh, 1500); 
+refresh();
 
 // ✅ Attach functions to window for onclick buttons
 window.start = start;

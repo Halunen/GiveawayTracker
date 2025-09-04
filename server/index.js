@@ -1,4 +1,4 @@
-// Giveaway Dashboard - full server (session-only total)
+// Giveaway Dashboard - full server (session-only total + pending chat view)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -53,6 +53,7 @@ let state = {
   keyword: 'yo',
   entrants: new Set(),
   pendingWinner: null,  // { user, gid }
+  pendingSince: null,   // ms timestamp when a winner was selected
   history: []           // { winner, gid, at }
 };
 
@@ -65,14 +66,14 @@ function bumpSessionTotal(amount, dedupeId) {
   if (!Number.isFinite(amt)) return { ok: false, error: 'invalid amount' };
   if (dedupeId && sessionDedup.has(String(dedupeId))) {
     return { ok: true, deduped: true, total: sessionTotal };
-  }
+    }
   sessionTotal += amt;
   if (dedupeId) sessionDedup.add(String(dedupeId));
   return { ok: true, total: sessionTotal };
 }
 // ---------------------------------------------------
 
-// Rolling buffer of recent messages per user (for winner_msgs)
+// Rolling buffer of recent messages per user (for winner_msgs and pending chat)
 const recentMsgs = new Map(); // username -> [{ text, at }]
 const MSG_KEEP_MS = 5 * 60 * 1000; // keep last 5 minutes
 const MAX_PER_USER = 50;           // cap per user
@@ -107,14 +108,13 @@ client.on('message', (channel, tags, message, self) => {
     }
   }
 
-  // --- record recent messages (for winner_msgs) ---
+  // --- record recent messages (for winner_msgs & pending chat view) ---
   const now = Date.now();
   const arr = recentMsgs.get(display) || [];
   arr.push({ text, at: now });
 
-  // trim per-user buffer
+  // trim per-user buffer and drop too-old messages
   while (arr.length > MAX_PER_USER) arr.shift();
-  // drop too-old messages
   while (arr.length && (now - arr[0].at) > MSG_KEEP_MS) arr.shift();
 
   recentMsgs.set(display, arr);
@@ -182,6 +182,7 @@ app.get('/status', (req, res) => {
     entrantCount: state.entrants.size,
     entrants: [...state.entrants],
     pendingWinner: state.pendingWinner,
+    pendingSince: state.pendingSince,  // <-- expose since timestamp
     history: state.history,
     maxEntrants: MAX_ENTRANTS,
     maxReached: state.entrants.size >= MAX_ENTRANTS,
@@ -190,10 +191,25 @@ app.get('/status', (req, res) => {
   });
 });
 
-// (Deprecated) /daily-total removed — using server-session total instead.
-// If you need a read-only endpoint:
+// Read-only endpoint for session total if needed by the UI
 app.get('/session-total', (req, res) => {
   res.json({ ok: true, total: sessionTotal });
+});
+
+// New: fetch a user's recent messages, optionally since a timestamp
+// GET /user-messages?user=<displayName>&since=<ms>
+app.get('/user-messages', (req, res) => {
+  const user = String(req.query.user || '').trim();
+  const since = req.query.since ? Number(req.query.since) : null;
+  if (!user) return res.status(400).json({ ok: false, error: 'missing user' });
+
+  const now = Date.now();
+  const arr = (recentMsgs.get(user) || [])
+    .filter(m => now - m.at <= MSG_KEEP_MS)       // only keep messages in our buffer window
+    .filter(m => (since ? m.at >= since : true))  // if since provided, filter
+    .slice(-50);                                  // cap
+
+  res.json({ ok: true, user, messages: arr });
 });
 
 app.post('/start', requireAdmin, async (req, res) => {
@@ -202,6 +218,7 @@ app.post('/start', requireAdmin, async (req, res) => {
   state.keyword = String(keyword || 'yo');
   state.entrants = new Set();
   state.pendingWinner = null;
+  state.pendingSince = null;
 
   console.log(`✅ Giveaway started with keyword "${state.keyword}"`);
   setTimeout(() => sayInChat(`Giveaway started — type ${state.keyword} to enter! Giveaway is open until closed.`), 0);
@@ -212,6 +229,8 @@ app.post('/start', requireAdmin, async (req, res) => {
 app.post('/close', requireAdmin, async (req, res) => {
   if (!state.open) return res.status(400).json({ error: 'Giveaway is not open.' });
   state.open = false;
+  state.pendingWinner = null;
+  state.pendingSince = null;
   console.log('✅ Giveaway closed');
   setTimeout(() => sayInChat(`Giveaway is now closed.`), 0);
   res.json({ ok: true });
@@ -223,12 +242,14 @@ app.post('/roll', requireAdmin, async (req, res) => {
 
   if (!arr.length) {
     state.pendingWinner = null;
+    state.pendingSince = null;
     console.log('⚠️ Tried to roll, but no entrants');
     return res.json({ ok: true, pendingWinner: null });
   }
 
   const pick = arr[Math.floor(Math.random() * arr.length)];
   state.pendingWinner = { user: pick, gid: newGid() };
+  state.pendingSince = Date.now(); // <-- start tracking for chat view
 
   console.log('🎲 Rolled winner:', pick);
   res.json({ ok: true, pendingWinner: state.pendingWinner });
@@ -243,12 +264,14 @@ app.post('/reroll', requireAdmin, async (req, res) => {
 
   if (!arr.length) {
     state.pendingWinner = null;
+    state.pendingSince = null;
     console.log('⚠️ Tried to reroll, but no entrants');
     return res.json({ ok: true, pendingWinner: null });
   }
 
   const pick = arr[Math.floor(Math.random() * arr.length)];
   state.pendingWinner = { user: pick, gid: newGid() };
+  state.pendingSince = Date.now(); // <-- start tracking for chat view
 
   console.log('🎲 Rerolled winner:', pick);
   res.json({ ok: true, pendingWinner: state.pendingWinner });
@@ -259,6 +282,7 @@ app.post('/reroll', requireAdmin, async (req, res) => {
 
 app.post('/cancel', requireAdmin, (req, res) => {
   state.pendingWinner = null;
+  state.pendingSince = null; // clear tracking
   console.log('⚠️ Pending winner cancelled');
   res.json({ ok: true });
 });
@@ -305,6 +329,7 @@ app.post('/confirm', requireAdmin, async (req, res) => {
   state.history.unshift({ winner: picked, gid: state.pendingWinner?.gid || newGid(), at: Date.now() });
   if (state.history.length > 50) state.history.pop();
   state.pendingWinner = null;
+  state.pendingSince = null; // clear after confirm
 
   res.json({ ok: true, sessionTotal });
 });
