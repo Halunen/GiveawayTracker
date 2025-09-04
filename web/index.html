@@ -40,7 +40,6 @@
     }
     @media(prefers-color-scheme:light){ input{ background:#fff } }
 
-    /* DEFAULT BUTTONS = GRAY */
     .btn{
       height:36px; padding:0 14px; border-radius:10px;
       border:1px solid var(--border);
@@ -51,7 +50,6 @@
     .btn:hover{ background:#d0d7e1 }
     .btn:active{ transform: translateY(1px) }
 
-    /* VARIANTS */
     .btn.primary{ background:linear-gradient(180deg,var(--brand),var(--brand-2)); border-color:transparent; color:#fff }
     .btn.ok{ background:linear-gradient(180deg,#22c55e,#16a34a); border-color:transparent; color:#04130a }
     .btn.warn{ background:linear-gradient(180deg,#f59e0b,#d97706); border-color:transparent; color:#1f1300 }
@@ -178,18 +176,23 @@ async function closeGiveaway(){
 async function roll() {
   try {
     const r = await fetch(API + '/roll', { method: 'POST', headers: authHeaders() });
+    const data = await r.json();
+    console.log('Roll response:', data);
     if (!r.ok) {
-      toast('Cannot roll yet', true);
+      toast('Roll failed: ' + (data.error || r.status), true);
       return;
     }
-    const data = await r.json();
-    toast('Rolled');
     if (data.pendingWinner) {
+      toast('Rolled: @' + data.pendingWinner.user);
       _lastStatus.pendingWinner = data.pendingWinner;
       renderPending(data.pendingWinner);
+    } else {
+      toast('No entrants yet');
+      renderPending(null);
     }
     refresh();
   } catch (err) {
+    console.error('Roll error:', err);
     toast('Roll failed', true);
   }
 }
@@ -200,25 +203,33 @@ async function confirmWinner(){
   const manual = prompt('Confirm which winner? (leave blank to confirm the pending one)');
   const r = await fetch(API + '/confirm', { method:'POST', headers:authHeaders(),
     body: JSON.stringify({ winner: manual || undefined, amount: amt, note }) });
-  if (!r.ok) toast('No winner to confirm', true); else toast('Winner confirmed 🎉');
+  const data = await r.json().catch(()=>({}));
+  console.log('Confirm response:', data);
+  if (!r.ok) toast('No winner to confirm', true); 
+  else toast('Winner confirmed 🎉');
   refresh();
 }
 
 async function reroll() {
   try {
     const r = await fetch(API + '/reroll', { method: 'POST', headers: authHeaders() });
+    const data = await r.json();
+    console.log('Reroll response:', data);
     if (!r.ok) {
-      toast('No entrants', true);
+      toast('Reroll failed: ' + (data.error || r.status), true);
       return;
     }
-    const data = await r.json();
-    toast('Rerolled');
     if (data.pendingWinner) {
+      toast('Rerolled: @' + data.pendingWinner.user);
       _lastStatus.pendingWinner = data.pendingWinner;
       renderPending(data.pendingWinner);
+    } else {
+      toast('No entrants yet');
+      renderPending(null);
     }
     refresh();
   } catch (err) {
+    console.error('Reroll error:', err);
     toast('Reroll failed', true);
   }
 }
@@ -276,7 +287,7 @@ function renderPending(pending){
           <button class="btn ok" onclick="cancel()">Cancel</button>
         </div>
       </div>
-    </div>`;
+    </div>;
 }
 
 async function refresh(){
@@ -291,7 +302,6 @@ async function refresh(){
     document.getElementById('status').innerHTML = `Open: <b>${s.open}</b> • Keyword: <b>${s.keyword}</b>`;
     _allEntrants = s.entrants || [];
 
-    // Fetch daily total
     try {
       const t = await fetch(API + '/daily-total');
       const tj = await t.json();
