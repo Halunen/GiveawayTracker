@@ -188,15 +188,21 @@ app.get('/daily-total', async (req, res) => {
 });
 
 app.post('/start', requireAdmin, async (req, res) => {
-  const { keyword = 'yo', durationMs = 60000 } = req.body || {};
+  const { keyword = 'yo' } = req.body || {};
   state.open = true;
   state.keyword = String(keyword || 'yo');
   state.entrants = new Set();
   state.pendingWinner = null;
 
-  await sayInChat(`Giveaway started — type ${state.keyword} to enter! You have ${Math.round(durationMs/1000)}s.`);
-  setTimeout(() => { state.open = false; }, Number(durationMs) || 60000);
+  await sayInChat(`Giveaway started — type ${state.keyword} to enter! Giveaway is open until closed.`);
+  res.json({ ok: true });
+});
 
+// NEW: Manual close endpoint
+app.post('/close', requireAdmin, async (req, res) => {
+  if (!state.open) return res.status(400).json({ error: 'Giveaway is not open.' });
+  state.open = false;
+  await sayInChat(`Giveaway is now closed.`);
   res.json({ ok: true });
 });
 
@@ -251,8 +257,8 @@ app.post('/confirm', requireAdmin, async (req, res) => {
     channel: TWITCH_CHANNEL.replace('#',''),
     winner: picked,
     amount,
-    winner_msgs,  // NEW
-    mod           // NEW
+    winner_msgs,
+    mod
   });
 
   state.history.unshift({ winner: picked, gid: state.pendingWinner?.gid || newGid(), at: Date.now() });

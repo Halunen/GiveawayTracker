@@ -81,7 +81,7 @@
       <div class="logo">GW</div>
       <div>
         <h2 style="margin:0">Giveaway Dashboard</h2>
-        <div style="color:var(--muted); font-size:13px">Start, roll, and confirm winners — logs to Google Sheets</div>
+        <div style="color:var(--muted); font-size:13px">Start, close, roll, and confirm winners — logs to Google Sheets</div>
       </div>
       <div style="margin-left:auto" id="livepill" class="pill">disconnected</div>
     </header>
@@ -91,11 +91,11 @@
       <div class="bd">
         <div class="row" style="margin-bottom:10px">
           <label>Keyword <input id="kw" value="yo" style="width:120px; margin-left:6px"></label>
-          <label>Open (sec) <input id="secs" value="60" style="width:120px; margin-left:6px"></label>
           <label>Admin Token 
             <input type="password" id="token" placeholder="optional" style="width:220px; margin-left:6px">
           </label>
           <button class="btn primary" onclick="start()">Start</button>
+          <button class="btn danger" onclick="closeGiveaway()">Close</button>
           <button class="btn warn" onclick="roll()">Roll</button>
           <button class="btn ok" onclick="confirmWinner()">Confirm</button>
           <button class="btn warn" onclick="reroll()">Reroll</button>
@@ -160,27 +160,21 @@ function authHeaders() {
   const t = document.getElementById('token').value.trim();
   return t ? { 'x-admin-token': t, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
 }
-function viewerCardUrl(channel, username) {
-  const ch = (channel || '').replace(/^#/, '');
-  return `https://www.twitch.tv/popout/${encodeURIComponent(ch)}/viewercard/${encodeURIComponent(username)}`;
-}
-function openViewerCard(username) {
-  const ch = _lastStatus?.channel || '';
-  window.open(viewerCardUrl(ch, username), '_blank', 'noopener,width=420,height=640');
-}
-function openPendingUserCard() {
-  const user = _lastStatus?.pendingWinner?.user;
-  if (!user) return alert('No pending winner right now.');
-  openViewerCard(user);
-}
 
 async function start(){
   const keyword = document.getElementById('kw').value || 'yo';
-  const secs = Number(document.getElementById('secs').value || 60);
   await fetch(API + '/start', { method:'POST', headers:authHeaders(),
-    body: JSON.stringify({ keyword, durationMs: secs*1000 }) });
+    body: JSON.stringify({ keyword }) });
   toast('Giveaway started'); refresh();
 }
+
+async function closeGiveaway(){
+  const r = await fetch(API + '/close', { method:'POST', headers:authHeaders() });
+  if (!r.ok) toast('No giveaway open', true);
+  else toast('Giveaway closed');
+  refresh();
+}
+
 async function roll(){ const r = await fetch(API + '/roll', { method:'POST', headers:authHeaders() }); if (!r.ok) toast('Cannot roll yet', true); else toast('Rolled'); refresh(); }
 async function confirmWinner(){
   const amt = document.getElementById('amount').value || '';
@@ -215,6 +209,18 @@ function renderRecent(list){
     d.textContent = `${w.winner} • ${dt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
     wrap.appendChild(d);
   });
+}
+function viewerCardUrl(channel, username) {
+  const ch = (_lastStatus?.channel || '').replace(/^#/, '');
+  return `https://www.twitch.tv/popout/${encodeURIComponent(ch)}/viewercard/${encodeURIComponent(username)}`;
+}
+function openViewerCard(username) {
+  window.open(viewerCardUrl(_lastStatus?.channel, username), '_blank', 'noopener,width=420,height=640');
+}
+function openPendingUserCard() {
+  const user = _lastStatus?.pendingWinner?.user;
+  if (!user) return alert('No pending winner right now.');
+  openViewerCard(user);
 }
 function renderPending(pending){
   const box = document.getElementById('pendingInner');
