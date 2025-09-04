@@ -208,32 +208,38 @@ app.post('/close', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ✅ Roll — now returns pendingWinner
+// ✅ Roll — always 200
 app.post('/roll', requireAdmin, async (req, res) => {
   const arr = [...state.entrants];
-  if (!arr.length) return res.status(400).json({ error: 'No entrants.' });
+
+  if (!arr.length) {
+    state.pendingWinner = null;
+    return res.json({ ok: true, pendingWinner: null });
+  }
 
   const pick = arr[Math.floor(Math.random() * arr.length)];
   state.pendingWinner = { user: pick, gid: newGid() };
 
   res.json({ ok: true, pendingWinner: state.pendingWinner });
 
-  // chat in background
   sayInChat(`Winner is @${pick}! Respond in chat!`)
     .catch(e => console.error('sayInChat failed:', e));
 });
 
-// ✅ Reroll — now returns pendingWinner
+// ✅ Reroll — always 200
 app.post('/reroll', requireAdmin, async (req, res) => {
   const arr = [...state.entrants];
-  if (!arr.length) return res.status(400).json({ error: 'No entrants.' });
+
+  if (!arr.length) {
+    state.pendingWinner = null;
+    return res.json({ ok: true, pendingWinner: null });
+  }
 
   const pick = arr[Math.floor(Math.random() * arr.length)];
   state.pendingWinner = { user: pick, gid: newGid() };
 
   res.json({ ok: true, pendingWinner: state.pendingWinner });
 
-  // chat in background
   sayInChat(`New winner is @${pick}!`)
     .catch(e => console.error('sayInChat failed:', e));
 });
