@@ -175,7 +175,25 @@ async function closeGiveaway(){
   refresh();
 }
 
-async function roll(){ const r = await fetch(API + '/roll', { method:'POST', headers:authHeaders() }); if (!r.ok) toast('Cannot roll yet', true); else toast('Rolled'); refresh(); }
+async function roll() {
+  try {
+    const r = await fetch(API + '/roll', { method: 'POST', headers: authHeaders() });
+    if (!r.ok) {
+      toast('Cannot roll yet', true);
+      return;
+    }
+    const data = await r.json();
+    toast('Rolled');
+    if (data.pendingWinner) {
+      _lastStatus.pendingWinner = data.pendingWinner;
+      renderPending(data.pendingWinner);
+    }
+    refresh();
+  } catch (err) {
+    toast('Roll failed', true);
+  }
+}
+
 async function confirmWinner(){
   const amt = document.getElementById('amount').value || '';
   const note = document.getElementById('note').value || '';
@@ -185,7 +203,26 @@ async function confirmWinner(){
   if (!r.ok) toast('No winner to confirm', true); else toast('Winner confirmed 🎉');
   refresh();
 }
-async function reroll(){ const r = await fetch(API + '/reroll', { method:'POST', headers:authHeaders() }); if (!r.ok) toast('No entrants', true); else toast('Rerolled'); refresh(); }
+
+async function reroll() {
+  try {
+    const r = await fetch(API + '/reroll', { method: 'POST', headers: authHeaders() });
+    if (!r.ok) {
+      toast('No entrants', true);
+      return;
+    }
+    const data = await r.json();
+    toast('Rerolled');
+    if (data.pendingWinner) {
+      _lastStatus.pendingWinner = data.pendingWinner;
+      renderPending(data.pendingWinner);
+    }
+    refresh();
+  } catch (err) {
+    toast('Reroll failed', true);
+  }
+}
+
 async function cancel(){ await fetch(API + '/cancel', { method:'POST', headers:authHeaders() }); toast('Pending cleared'); refresh(); }
 
 function toast(msg, isErr=false){ const el = document.getElementById('toast'); el.textContent = msg; el.style.borderColor = isErr ? 'var(--danger)' : 'var(--border)'; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1800); }
